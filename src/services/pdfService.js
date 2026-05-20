@@ -1,44 +1,52 @@
+// src/services/pdfService.js
 import { supabase } from '../supabase'
 
-// =============================================
-// UPLOADER UN PDF
-// =============================================
-export const uploadPDF = async (file, title, description) => {
-    try {
-        // 1. Créer un nom unique pour le fichier
-        const fileName = `${Date.now()}-${file.name}`
+// Assure-toi d'utiliser le bon nom de bucket. 
+// Dans ton code tu utilisais 'pdfs', on va le garder.
+const BUCKET_NAME = 'pdfs'
 
-        // 2. Uploader le fichier dans Storage
+// =============================================
+// UPLOADER UN COURS (PDF)
+// =============================================
+export const uploadCourse = async (file, title, enonce, niveau, category) => {
+    try {
+        // 1. (Optionnel) Vérifier que l'utilisateur est connecté pour la sécurité RLS
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session) return { success: false, error: "Vous devez être connecté." }
+
+        // 2. Créer un nom unique (en nettoyant les espaces et accents)
+        const cleanFileName = file.name.replace(/[^a-zA-Z0-9.\-]/g, '_')
+        const fileName = `${Date.now()}-${cleanFileName}`
+
+        // 3. Uploader le fichier dans Storage
         const { error: uploadError } = await supabase.storage
-            .from('pdfs')
+            .from(BUCKET_NAME)
             .upload(fileName, file)
 
-        if (uploadError) {
-            return { success: false, error: uploadError.message }
-        }
+        if (uploadError) return { success: false, error: uploadError.message }
 
-        // 3. Récupérer l'URL publique
+        // 4. Récupérer l'URL publique
         const { data: urlData } = supabase.storage
-            .from('pdfs')
+            .from(BUCKET_NAME)
             .getPublicUrl(fileName)
 
         const fileUrl = urlData.publicUrl
 
-        // 4. Enregistrer dans la table documents
+        // 5. Enregistrer dans la table 'courses' (qui remplace 'documents')
         const { data, error: insertError } = await supabase
-            .from('documents')
+            .from('courses')
             .insert([
                 {
                     title,
-                    description,
-                    file_url: fileUrl
+                    enonce, // équivalent de ta description
+                    niveau, // L1, L2, ou L3
+                    category,
+                    pdf_url: fileUrl // Correspond à ton SQL
                 }
             ])
             .select()
 
-        if (insertError) {
-            return { success: false, error: insertError.message }
-        }
+        if (insertError) return { success: false, error: insertError.message }
 
         return { success: true, data: data[0] }
 
@@ -48,18 +56,16 @@ export const uploadPDF = async (file, title, description) => {
 }
 
 // =============================================
-// RÉCUPÉRER TOUS LES PDF
+// RÉCUPÉRER TOUS LES COURS
 // =============================================
-export const getAllPDF = async () => {
+export const getAllCourses = async () => {
     try {
         const { data, error } = await supabase
-            .from('documents')
+            .from('courses')
             .select('*')
             .order('created_at', { ascending: false })
 
-        if (error) {
-            return { success: false, error: error.message }
-        }
+        if (error) return { success: false, error: error.message }
 
         return { success: true, data }
 
@@ -69,25 +75,23 @@ export const getAllPDF = async () => {
 }
 
 // =============================================
-// SUPPRIMER UN PDF
+// SUPPRIMER UN COURS
 // =============================================
-export const deletePDF = async (id, fileUrl) => {
+export const deleteCourse = async (id, pdfUrl) => {
     try {
-        // 1. Extraire le nom du fichier de l'URL
-        const fileName = fileUrl.split('/').pop()
+        // 1. Extraire le nom du fichier de l'URL s'il y a un PDF
+        if (pdfUrl) {
+            const fileName = pdfUrl.split('/').pop()
+            await supabase.storage.from(BUCKET_NAME).remove([fileName])
+        }
 
-        // 2. Supprimer du Storage
-        await supabase.storage.from('pdfs').remove([fileName])
-
-        // 3. Supprimer de la table
+        // 2. Supprimer de la table courses
         const { error } = await supabase
-            .from('documents')
+            .from('courses')
             .delete()
             .eq('id', id)
 
-        if (error) {
-            return { success: false, error: error.message }
-        }
+        if (error) return { success: false, error: error.message }
 
         return { success: true }
 
